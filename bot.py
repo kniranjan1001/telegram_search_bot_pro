@@ -16,7 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 JSON_URL = os.getenv("JSON_URL")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
-CHANNELS = os.getenv("CHANNELS").split(",")  # Comma-separated list of required channel usernames
+CHANNELS = ["@cc_new_moviess"]
 
 # MongoDB setup
 client = MongoClient(MONGO_URI)
