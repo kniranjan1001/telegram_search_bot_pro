@@ -164,7 +164,7 @@ async def help(update: Update, context: CallbackContext) -> None:
         return
 
     help_message = """
-    *Help for Admin:*
+    *Help for Admin:* 
 
     /start - Start the bot and check for channel subscription.
 
@@ -214,16 +214,16 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
 
         await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
     else:
-        await update.message.reply_text(f"❌ No requests found for the movies: {', '.join(movie_names)}.")
+        await update.message.reply_text(f"❌ No requests found for the specified movies.")
 
-# Main function to set up the bot
-def main():
+# Main function to set up the handlers
+def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("requests", view_requests))
     application.add_handler(CommandHandler("help", help))
     application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("requests", view_requests))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
     application.add_handler(CallbackQueryHandler(button_callback))
 
