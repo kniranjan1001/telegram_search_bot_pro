@@ -95,9 +95,7 @@ async def search_movie(update: Update, context: CallbackContext) -> None:
         message = await update.message.reply_text("❌ No matching movies found. You can request the movie.")
         return
 
-    await asyncio.sleep(60)
-    await message.delete()
-
+    # Immediately send the Yes/No options for confirmation
     options_keyboard = InlineKeyboardMarkup(
         [
             [
