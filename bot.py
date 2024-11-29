@@ -66,7 +66,7 @@ async def search_movie(update: Update, context: CallbackContext) -> None:
     subscribed = await is_subscribed(user.id, context)
 
     if not subscribed:
-        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/{channel}")] for channel in CHANNELS]
+        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/addlist/4LAlWDoYvHk2ZDdl")] for channel in CHANNELS]
         await update.message.reply_text(
             "🔔 You need to subscribe to the following channels to use this bot:",
             reply_markup=InlineKeyboardMarkup(buttons),
@@ -170,11 +170,10 @@ async def help(update: Update, context: CallbackContext) -> None:
 
     /broadcast <movie1,movie2,...> <message> - Send a message to all users who requested one or more of the specified movies.
 
-    Example:
-    /broadcast movie1,movie2 "New movie releases are available!"
-    This will send the message to users who requested either movie1 or movie2.
+    /delete <movie1,movie2,...> - Delete one or more movies from the database.
 
-    The bot will also handle incoming movie requests and check if the user has already requested a movie. Requests are logged, and users are notified if their request has been noted.
+    Example:
+    /delete movie1,movie2 - This will delete movie1 and movie2 from the database.
     """
 
     await update.message.reply_text(help_message)
@@ -222,6 +221,7 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("requests", view_requests))
+    application.add_handler(CommandHandler("delete", delete_movies))  # Add the /delete command handler
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
     application.add_handler(CallbackQueryHandler(button_callback))
 
