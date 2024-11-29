@@ -178,40 +178,38 @@ async def help(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(help_message)
 
-# Handle /broadcast command (admin only)
-async def broadcast(update: Update, context: CallbackContext) -> None:
+# Handle /delete command (admin only)
+async def delete_movies(update: Update, context: CallbackContext) -> None:
     user = update.message.from_user
     if user.id != ADMIN_USER_ID:
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
+    # Get the movie names from the command argument
     args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("Usage: /broadcast <movie_names> <message>")
+    if len(args) < 1:
+        await update.message.reply_text("Usage: /delete <movie_names>")
         return
 
-    movie_names = args[0].split(",")
-    message = " ".join(args[1:])
-    user_ids = set()
+    movie_names = args[0].split(",")  # Split movie names if multiple are given
 
+    # Initialize a message for feedback
+    feedback_message = "🎬 Deleting the following movies:\n\n"
+
+    # Loop through movie names and delete each one
     for movie_name in movie_names:
-        movie_request = requests_collection.find_one({"movie_name": movie_name.strip()})
+        movie_name = movie_name.strip()  # Clean the movie name
+        movie_request = requests_collection.find_one({"movie_name": movie_name})
 
-        if not movie_request:
-            continue
+        if movie_request:
+            # If movie exists, delete it from the database
+            requests_collection.delete_one({"movie_name": movie_name})
+            feedback_message += f"✅ {movie_name} has been deleted.\n"
+        else:
+            # If movie doesn't exist in the database
+            feedback_message += f"❌ {movie_name} was not found.\n"
 
-        user_ids.update(movie_request["user_requested"])
-
-    if user_ids:
-        for user_id in user_ids:
-            try:
-                await context.bot.send_message(chat_id=user_id, text=message)
-            except Exception as e:
-                logger.error(f"Failed to send message to user {user_id}: {e}")
-
-        await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
-    else:
-        await update.message.reply_text(f"❌ No requests found for the specified movies.")
+    await update.message.reply_text(feedback_message)
 
 # Main function to set up the handlers
 def main() -> None:
