@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
 from fuzzywuzzy import process
@@ -15,6 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 JSON_URL = os.getenv("JSON_URL")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
+CHANNELS = os.getenv("CHANNELS").split(",")  # Comma-separated list of required channel usernames
 
 # MongoDB setup
 client = MongoClient(MONGO_URI)
@@ -31,42 +33,71 @@ def fetch_movie_data():
         logger.error(f"Error fetching data from JSON URL: {e}")
         return {}
 
+# Check user subscription status
+async def is_subscribed(user_id: int, context: CallbackContext) -> bool:
+    for channel in CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except Exception as e:
+            logger.error(f"Error checking subscription for user {user_id} in {channel}: {e}")
+            return False
+    return True
+
 # Handle the /start command
 async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("🎬 Welcome to the Movie Bot!\nSend me a movie name to search for its link.")
+    user = update.message.from_user
+    subscribed = await is_subscribed(user.id, context)
+    
+    if not subscribed:
+        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/{channel}")] for channel in CHANNELS]
+        await update.message.reply_text(
+            "🔔 You need to subscribe to the following channels to use this bot:",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
+    await update.message.reply_text("🎬 Welcome to the Movie Bot! Send me a movie name to search for its link.")
 
 # Handle movie search
 async def search_movie(update: Update, context: CallbackContext) -> None:
     user = update.message.from_user
+    subscribed = await is_subscribed(user.id, context)
+
+    if not subscribed:
+        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/{channel}")] for channel in CHANNELS]
+        await update.message.reply_text(
+            "🔔 You need to subscribe to the following channels to use this bot:",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
     movie_name = update.message.text.strip()
-    
-    # Fetch data from JSON
     movie_data = fetch_movie_data()
     movie_names = list(movie_data.keys())
-    
-    # Find similar matches
+
     matches = process.extract(movie_name, movie_names, limit=5)
     buttons = []
 
-    # Create buttons for matches
     for match in matches:
         matched_movie = match[0]
         match_url = movie_data[matched_movie]
         buttons.append(InlineKeyboardButton(text=matched_movie, url=match_url))
-    
-    # Prepare response
+
     if buttons:
         keyboard = InlineKeyboardMarkup([[button] for button in buttons])
-        message = (
-            f"🎥 Here are the closest matches for '{movie_name}':\n\n"
-            "👇 Click on a button to access the movie."
+        message = await update.message.reply_text(
+            f"🎥 Here are the closest matches for '{movie_name}':\n\n👇 Click on a button to access the movie.",
+            reply_markup=keyboard,
         )
-        await update.message.reply_text(message, reply_markup=keyboard)
     else:
-        await update.message.reply_text("❌ No matching movies found. You can request the movie.")
+        message = await update.message.reply_text("❌ No matching movies found. You can request the movie.")
         return
 
-    # Ask user if the response was helpful
+    await asyncio.sleep(60)
+    await message.delete()
+
     options_keyboard = InlineKeyboardMarkup(
         [
             [
@@ -81,23 +112,27 @@ async def search_movie(update: Update, context: CallbackContext) -> None:
 async def button_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data.split("|")
     action = data[0]
     movie_name = data[1]
+    user = query.from_user
 
     if action == "response_yes":
         await query.edit_message_text("🎉 Hope it helped! Enjoy your movie. 🍿")
     elif action == "response_no":
-        # Increment request count in MongoDB
         existing_request = requests_collection.find_one({"movie_name": movie_name})
         if existing_request:
-            requests_collection.update_one(
-                {"movie_name": movie_name}, {"$inc": {"request_count": 1}}
-            )
+            # Check if the user has already requested this movie
+            if user.id not in existing_request["user_requested"]:
+                requests_collection.update_one(
+                    {"movie_name": movie_name},
+                    {"$inc": {"times": 1}, "$addToSet": {"user_requested": user.id}},
+                )
         else:
-            requests_collection.insert_one({"movie_name": movie_name, "request_count": 1})
-        
+            requests_collection.insert_one(
+                {"movie_name": movie_name, "times": 1, "user_requested": [user.id]}
+            )
         await query.edit_message_text("📋 Your request has been noted. We'll try to add it soon. 😊")
 
 # Handle /requests command (admin only)
@@ -107,33 +142,91 @@ async def view_requests(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
-    # Fetch all requests from MongoDB
     movie_requests = requests_collection.find()
-    if movie_requests.count() == 0:
+    if requests_collection.count_documents({}) == 0:
         await update.message.reply_text("📋 No movie requests yet.")
         return
 
     message = "📋 *Movie Requests:*\n\n"
     for request in movie_requests:
-        message += f"🎥 {request['movie_name']} - {request['request_count']} requests\n"
-    
+        message += (
+            f"🎥 {request['movie_name']} - {request['times']} requests\n"
+            f"👥 Requested by: {', '.join(map(str, request['user_requested']))}\n\n"
+        )
+
     await update.message.reply_text(message, parse_mode="Markdown")
+
+# Handle /help command (admin only)
+async def help(update: Update, context: CallbackContext) -> None:
+    user = update.message.from_user
+    if user.id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    help_message = """
+    *Help for Admin:*
+
+    /start - Start the bot and check for channel subscription.
+
+    /requests - View all movie requests and the number of times each movie has been requested.
+
+    /broadcast <movie1,movie2,...> <message> - Send a message to all users who requested one or more of the specified movies.
+
+    Example:
+    /broadcast movie1,movie2 "New movie releases are available!"
+    This will send the message to users who requested either movie1 or movie2.
+
+    The bot will also handle incoming movie requests and check if the user has already requested a movie. Requests are logged, and users are notified if their request has been noted.
+    """
+
+    await update.message.reply_text(help_message)
+
+# Handle /broadcast command (admin only)
+async def broadcast(update: Update, context: CallbackContext) -> None:
+    user = update.message.from_user
+    if user.id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /broadcast <movie_names> <message>")
+        return
+
+    movie_names = args[0].split(",")
+    message = " ".join(args[1:])
+    user_ids = set()
+
+    for movie_name in movie_names:
+        movie_request = requests_collection.find_one({"movie_name": movie_name.strip()})
+
+        if not movie_request:
+            continue
+
+        user_ids.update(movie_request["user_requested"])
+
+    if user_ids:
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=message)
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user_id}: {e}")
+
+        await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
+    else:
+        await update.message.reply_text(f"❌ No requests found for the movies: {', '.join(movie_names)}.")
 
 # Main function to set up the bot
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Command handlers
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("requests", view_requests))
-    
-    # Message handler for movie search
+    application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-    
-    # Callback query handler
     application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Start the bot
+
     application.run_polling()
 
 if __name__ == "__main__":
