@@ -36,6 +36,8 @@ def fetch_movie_data():
 # Helper: Check user subscription
 async def is_user_subscribed(user_id, context):
     try:
+        if user_id == ADMIN_USER_ID:
+        return True
         member_status = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member_status.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
     except Exception as e:
