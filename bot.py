@@ -173,10 +173,46 @@ async def help(update: Update, context: CallbackContext) -> None:
     /delete <movie1,movie2,...> - Delete one or more movies from the database.
 
     Example:
-    /delete movie1,movie2 - This will delete movie1 and movie2 from the database.
+    /broadcast movie1,movie2 "New movie releases are available!"
+    This will send the message to users who requested either movie1 or movie2.
     """
 
     await update.message.reply_text(help_message)
+
+# Handle /broadcast command (admin only)
+async def broadcast(update: Update, context: CallbackContext) -> None:
+    user = update.message.from_user
+    if user.id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /broadcast <movie_names> <message>")
+        return
+
+    movie_names = args[0].split(",")
+    message = " ".join(args[1:])
+    user_ids = set()
+
+    for movie_name in movie_names:
+        movie_request = requests_collection.find_one({"movie_name": movie_name.strip()})
+
+        if not movie_request:
+            continue
+
+        user_ids.update(movie_request["user_requested"])
+
+    if user_ids:
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=message)
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user_id}: {e}")
+
+        await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
+    else:
+        await update.message.reply_text(f"❌ No requests found for the specified movies.")
 
 # Handle /delete command (admin only)
 async def delete_movies(update: Update, context: CallbackContext) -> None:
@@ -185,29 +221,22 @@ async def delete_movies(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
-    # Get the movie names from the command argument
     args = context.args
-    if len(args) < 1:
-        await update.message.reply_text("Usage: /delete <movie_names>")
+    if len(args) == 0:
+        await update.message.reply_text("Usage: /delete <movie_name1,movie_name2,...>")
         return
 
-    movie_names = args[0].split(",")  # Split movie names if multiple are given
+    movie_names = args[0].split(",")
+    feedback_message = "📋 Deleting the following movies:\n\n"
 
-    # Initialize a message for feedback
-    feedback_message = "🎬 Deleting the following movies:\n\n"
-
-    # Loop through movie names and delete each one
     for movie_name in movie_names:
-        movie_name = movie_name.strip()  # Clean the movie name
-        movie_request = requests_collection.find_one({"movie_name": movie_name})
+        movie_name = movie_name.strip()  # Remove extra spaces
+        result = requests_collection.delete_one({"movie_name": movie_name})
 
-        if movie_request:
-            # If movie exists, delete it from the database
-            requests_collection.delete_one({"movie_name": movie_name})
-            feedback_message += f"✅ {movie_name} has been deleted.\n"
+        if result.deleted_count > 0:
+            feedback_message += f"✅ {movie_name}\n"
         else:
-            # If movie doesn't exist in the database
-            feedback_message += f"❌ {movie_name} was not found.\n"
+            feedback_message += f"❌ {movie_name} not found in the database.\n"
 
     await update.message.reply_text(feedback_message)
 
