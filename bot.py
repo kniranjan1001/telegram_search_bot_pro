@@ -117,7 +117,7 @@ async def button_callback(update: Update, context: CallbackContext) -> None:
     user = query.from_user
 
     if action == "response_yes":
-        await query.edit_message_text("🎉 Hope it helped! Enjoy your movie. 🍿")
+        await query.edit_message_text("🎉 Hope it helped! Enjoy your movie🍿. ⌲ For upload updates join - https://t.me/+agty3W0_CAFkZmI1 ♡")
     elif action == "response_no":
         existing_request = requests_collection.find_one({"movie_name": movie_name})
         if existing_request:
@@ -131,7 +131,7 @@ async def button_callback(update: Update, context: CallbackContext) -> None:
             requests_collection.insert_one(
                 {"movie_name": movie_name, "times": 1, "user_requested": [user.id]}
             )
-        await query.edit_message_text("📋 Your request has been noted. We'll try to add it soon. 😊")
+        await query.edit_message_text("📋 Your request has been noted. We'll try to add it soon. 😊 For upload updates join - https://t.me/+agty3W0_CAFkZmI1 ♡")
 
 # Handle /requests command (admin only)
 async def view_requests(update: Update, context: CallbackContext) -> None:
