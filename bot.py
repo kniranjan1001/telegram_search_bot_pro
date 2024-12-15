@@ -1,42 +1,33 @@
 import os
 import logging
-from flask import Flask, request
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
-from pymongo import MongoClient
 from fuzzywuzzy import process
+from pymongo import MongoClient
 import requests
 
 # Enable logging
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Now you can access the environment variables
+# Load environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 JSON_URL = os.getenv("JSON_URL")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
-CHANNELS = ["@cc_new_moviess"]  # Assuming CHANNELS are comma-separated
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-# Log environment variables loading
-logger.info("Loaded environment variables")
+CHANNELS = ["@cc_new_moviess"]
 
 # MongoDB setup
-try:
-    client = MongoClient(MONGO_URI)
-    db = client["movie_bot"]
-    requests_collection = db["movie_requests"]
-    logger.info("MongoDB connection established successfully")
-except Exception as e:
-    logger.error(f"Error connecting to MongoDB: {e}")
+client = MongoClient(MONGO_URI)
+db = client["movie_bot"]
+requests_collection = db["movie_requests"]
 
 # Fetch movie data from JSON URL
 def fetch_movie_data():
     try:
         response = requests.get(JSON_URL)
         response.raise_for_status()
-        logger.info("Fetched movie data from JSON URL successfully")
         return response.json()
     except requests.RequestException as e:
         logger.error(f"Error fetching data from JSON URL: {e}")
@@ -56,7 +47,6 @@ async def is_subscribed(user_id: int, context: CallbackContext) -> bool:
 
 # Handle the /start command
 async def start(update: Update, context: CallbackContext) -> None:
-    logger.info(f"/start command received from user {update.message.from_user.id}")
     user = update.message.from_user
     subscribed = await is_subscribed(user.id, context)
     
@@ -72,7 +62,6 @@ async def start(update: Update, context: CallbackContext) -> None:
 
 # Handle movie search
 async def search_movie(update: Update, context: CallbackContext) -> None:
-    logger.info(f"Movie search request from user {update.message.from_user.id}: {update.message.text}")
     user = update.message.from_user
     subscribed = await is_subscribed(user.id, context)
 
@@ -88,9 +77,6 @@ async def search_movie(update: Update, context: CallbackContext) -> None:
     movie_data = fetch_movie_data()
     movie_names = list(movie_data.keys())
 
-    if not movie_names:
-        logger.warning(f"No movies found for search term: {movie_name}")
-    
     matches = process.extract(movie_name, movie_names, limit=5)
     buttons = []
 
@@ -135,10 +121,11 @@ async def button_callback(update: Update, context: CallbackContext) -> None:
     elif action == "response_no":
         existing_request = requests_collection.find_one({"movie_name": movie_name})
         if existing_request:
+            # Check if the user has already requested this movie
             if user.id not in existing_request["user_requested"]:
                 requests_collection.update_one(
                     {"movie_name": movie_name},
-                    {"$inc": {"times": 1}, "$addToSet": {"user_requested": user.id}} ,
+                    {"$inc": {"times": 1}, "$addToSet": {"user_requested": user.id}},
                 )
         else:
             requests_collection.insert_one(
@@ -180,38 +167,96 @@ async def help(update: Update, context: CallbackContext) -> None:
     /start - Start the bot and check for channel subscription.
 
     /requests - View all movie requests and the number of times each movie has been requested.
+
+    /broadcast <movie1,movie2,...> <message> - Send a message to all users who requested one or more of the specified movies.
+
+    /delete <movie1,movie2,...> - Delete one or more movies from the database.
+
+    Example:
+    /broadcast movie1,movie2 "New movie releases are available!"
+    This will send the message to users who requested either movie1 or movie2.
     """
 
     await update.message.reply_text(help_message)
 
-# Remove /broadcast method and related handler
+# Handle /broadcast command (admin only)
+async def broadcast(update: Update, context: CallbackContext) -> None:
+    user = update.message.from_user
+    if user.id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
 
-# Set up webhook and handlers
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /broadcast <movie_names> <message>")
+        return
+
+    movie_names = args[0].split(",")
+    message = " ".join(args[1:])
+    user_ids = set()
+
+    for movie_name in movie_names:
+        movie_request = requests_collection.find_one({"movie_name": movie_name.strip()})
+
+        if not movie_request:
+            continue
+
+        user_ids.update(movie_request["user_requested"])
+
+    if user_ids:
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=message)
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user_id}: {e}")
+
+        await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
+    else:
+        await update.message.reply_text(f"❌ No requests found for the specified movies.")
+
+# Handle /delete command (admin only)
+async def delete_movies(update: Update, context: CallbackContext) -> None:
+    user = update.message.from_user
+    if user.id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    args = context.args
+    if len(args) == 0:
+        await update.message.reply_text("Usage: /delete <movie_name1,movie_name2,...>")
+        return
+
+    movie_names = args[0].split(",")
+    feedback_message = "📋 Deleting the following movies:\n\n"
+
+    for movie_name in movie_names:
+        movie_name = movie_name.strip()  # Remove extra spaces
+        result = requests_collection.delete_one({"movie_name": movie_name})
+
+        if result.deleted_count > 0:
+            feedback_message += f"✅ {movie_name}\n"
+        else:
+            feedback_message += f"❌ {movie_name} not found in the database.\n"
+
+    await update.message.reply_text(feedback_message)
+
+# Main function to set up the handlers
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
+    webhook_url = f"https://telegram-search-bot-pro.onrender.com/{BOT_TOKEN}"
 
-    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("requests", view_requests))
+    application.add_handler(CommandHandler("delete", delete_movies))  # Add the /delete command handler
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    # Set up webhook
-    application.bot.set_webhook(WEBHOOK_URL)
+    # Set the webhook
+    application.run_webhook(listen='0.0.0.0', port=int(os.environ.get("PORT", 5000)), webhook_url=webhook_url, url_path=BOT_TOKEN)
 
-    # Flask app to handle webhook requests
-    app = Flask(__name__)
-
-    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
-    def webhook():
-        json_str = request.get_data().decode("UTF-8")
-        update = Update.de_json(json_str, application.bot)
-        application.process_update(update)
-        return "OK"
-
-    # Start the Flask web server
-    app.run(host="0.0.0.0", port=5000)
+    # application.run_polling()
 
 if __name__ == "__main__":
     main()
