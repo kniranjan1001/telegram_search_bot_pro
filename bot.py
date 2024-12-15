@@ -3,14 +3,12 @@ import logging
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
-# from fuzzywuzzy import process
 from pymongo import MongoClient
 import requests
 
 # Enable logging
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 # Now you can access the environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -19,18 +17,25 @@ MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
 CHANNELS = ["@cc_new_moviess"]  # Assuming CHANNELS are comma-separated
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-# Load environment variables
+
+# Log environment variables loading
+logger.info("Loaded environment variables")
 
 # MongoDB setup
-client = MongoClient(MONGO_URI)
-db = client["movie_bot"]
-requests_collection = db["movie_requests"]
+try:
+    client = MongoClient(MONGO_URI)
+    db = client["movie_bot"]
+    requests_collection = db["movie_requests"]
+    logger.info("MongoDB connection established successfully")
+except Exception as e:
+    logger.error(f"Error connecting to MongoDB: {e}")
 
 # Fetch movie data from JSON URL
 def fetch_movie_data():
     try:
         response = requests.get(JSON_URL)
         response.raise_for_status()
+        logger.info("Fetched movie data from JSON URL successfully")
         return response.json()
     except requests.RequestException as e:
         logger.error(f"Error fetching data from JSON URL: {e}")
@@ -50,6 +55,7 @@ async def is_subscribed(user_id: int, context: CallbackContext) -> bool:
 
 # Handle the /start command
 async def start(update: Update, context: CallbackContext) -> None:
+    logger.info(f"/start command received from user {update.message.from_user.id}")
     user = update.message.from_user
     subscribed = await is_subscribed(user.id, context)
     
@@ -65,6 +71,7 @@ async def start(update: Update, context: CallbackContext) -> None:
 
 # Handle movie search
 async def search_movie(update: Update, context: CallbackContext) -> None:
+    logger.info(f"Movie search request from user {update.message.from_user.id}: {update.message.text}")
     user = update.message.from_user
     subscribed = await is_subscribed(user.id, context)
 
@@ -80,6 +87,9 @@ async def search_movie(update: Update, context: CallbackContext) -> None:
     movie_data = fetch_movie_data()
     movie_names = list(movie_data.keys())
 
+    if not movie_names:
+        logger.warning(f"No movies found for search term: {movie_name}")
+    
     matches = process.extract(movie_name, movie_names, limit=5)
     buttons = []
 
@@ -215,66 +225,35 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
 
         await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
     else:
-        await update.message.reply_text(f"❌ No requests found for the specified movies.")
+        await update.message.reply_text(f"❌ No users found who requested {', '.join(movie_names)}.")
 
-# Handle /delete command (admin only)
-async def delete_movies(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
-        return
+# Set up webhook and handlers
+def main() -> None:
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    args = context.args
-    if len(args) == 0:
-        await update.message.reply_text("Usage: /delete <movie_name1,movie_name2,...>")
-        return
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("requests", view_requests))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("delete", delete_movie))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
+    application.add_handler(CallbackQueryHandler(button_callback))
 
-    movie_names = args[0].split(",")
-    feedback_message = "📋 Deleting the following movies:\n\n"
+    # Set up webhook
+    application.bot.set_webhook(WEBHOOK_URL)
 
-    for movie_name in movie_names:
-        movie_name = movie_name.strip()  # Remove extra spaces
-        result = requests_collection.delete_one({"movie_name": movie_name})
+    # Start webhook handling
+    app = Flask(__name__)
 
-        if result.deleted_count > 0:
-            feedback_message += f"✅ {movie_name}\n"
-        else:
-            feedback_message += f"❌ {movie_name} not found in the database.\n"
+    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
+    def webhook():
+        json_str = request.get_data().decode("UTF-8")
+        update = Update.de_json(json_str, application.bot)
+        application.process_update(update)
+        return "OK"
 
-    await update.message.reply_text(feedback_message)
+    app.run(host="0.0.0.0", port=5000)
 
-# Flask app for webhook
-app = Flask(__name__)
-
-# Initialize Telegram bot and dispatcher
-application = Application.builder().token(BOT_TOKEN).build()
-
-# Add handlers to dispatcher
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("help", help))
-application.add_handler(CommandHandler("broadcast", broadcast))
-application.add_handler(CommandHandler("requests", view_requests))
-application.add_handler(CommandHandler("delete", delete_movies))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-application.add_handler(CallbackQueryHandler(button_callback))
-
-# Webhook route
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    """Process updates sent by Telegram."""
-    update = Update.de_json(request.get_json(), application.bot)
-    application.update_queue.put(update)
-    return "OK", 200
-
-# Set webhook before the first request
-# Correct use of before_first_request
-def set_webhook():
-    application.bot.delete_webhook()
-    application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-
-# Use this instead of @app.before_first_request decorator
-set_webhook()
-
-# Run Flask app
 if __name__ == "__main__":
-    app.run(port=8443, host="0.0.0.0")
+    main()
