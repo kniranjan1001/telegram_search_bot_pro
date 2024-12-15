@@ -4,7 +4,6 @@ from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
 from pymongo import MongoClient
-from fuzzywuzzy import process
 import requests
 
 # Enable logging
@@ -228,25 +227,6 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text(f"❌ No users found who requested {', '.join(movie_names)}.")
 
-# Handle /delete command (admin only)
-async def delete_movie(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
-        return
-
-    args = context.args
-    if not args:
-        await update.message.reply_text("Usage: /delete <movie_names>")
-        return
-
-    for movie_name in args:
-        result = requests_collection.delete_one({"movie_name": movie_name.strip()})
-        if result.deleted_count > 0:
-            await update.message.reply_text(f"✅ Movie '{movie_name}' deleted from the database.")
-        else:
-            await update.message.reply_text(f"❌ Movie '{movie_name}' not found in the database.")
-
 # Set up webhook and handlers
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
@@ -263,8 +243,17 @@ def main() -> None:
     # Set up webhook
     application.bot.set_webhook(WEBHOOK_URL)
 
-    # Start polling
-    application.run_polling()
+    # Start webhook handling
+    app = Flask(__name__)
+
+    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
+    def webhook():
+        json_str = request.get_data().decode("UTF-8")
+        update = Update.de_json(json_str, application.bot)
+        application.process_update(update)
+        return "OK"
+
+    app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
     main()
