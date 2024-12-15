@@ -4,6 +4,7 @@ from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
 from pymongo import MongoClient
+from fuzzywuzzy import process
 import requests
 
 # Enable logging
@@ -134,11 +135,10 @@ async def button_callback(update: Update, context: CallbackContext) -> None:
     elif action == "response_no":
         existing_request = requests_collection.find_one({"movie_name": movie_name})
         if existing_request:
-            # Check if the user has already requested this movie
             if user.id not in existing_request["user_requested"]:
                 requests_collection.update_one(
                     {"movie_name": movie_name},
-                    {"$inc": {"times": 1}, "$addToSet": {"user_requested": user.id}},
+                    {"$inc": {"times": 1}, "$addToSet": {"user_requested": user.id}} ,
                 )
         else:
             requests_collection.insert_one(
@@ -180,52 +180,11 @@ async def help(update: Update, context: CallbackContext) -> None:
     /start - Start the bot and check for channel subscription.
 
     /requests - View all movie requests and the number of times each movie has been requested.
-
-    /broadcast <movie1,movie2,...> <message> - Send a message to all users who requested one or more of the specified movies.
-
-    /delete <movie1,movie2,...> - Delete one or more movies from the database.
-
-    Example:
-    /broadcast movie1,movie2 "New movie releases are available!"
-    This will send the message to users who requested either movie1 or movie2.
     """
 
     await update.message.reply_text(help_message)
 
-# Handle /broadcast command (admin only)
-async def broadcast(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
-        return
-
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("Usage: /broadcast <movie_names> <message>")
-        return
-
-    movie_names = args[0].split(",")
-    message = " ".join(args[1:])
-    user_ids = set()
-
-    for movie_name in movie_names:
-        movie_request = requests_collection.find_one({"movie_name": movie_name.strip()})
-
-        if not movie_request:
-            continue
-
-        user_ids.update(movie_request["user_requested"])
-
-    if user_ids:
-        for user_id in user_ids:
-            try:
-                await context.bot.send_message(chat_id=user_id, text=message)
-            except Exception as e:
-                logger.error(f"Failed to send message to user {user_id}: {e}")
-
-        await update.message.reply_text(f"✅ Broadcast message sent to users who requested {', '.join(movie_names)}.")
-    else:
-        await update.message.reply_text(f"❌ No users found who requested {', '.join(movie_names)}.")
+# Remove /broadcast method and related handler
 
 # Set up webhook and handlers
 def main() -> None:
@@ -235,15 +194,13 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help))
     application.add_handler(CommandHandler("requests", view_requests))
-    application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("delete", delete_movie))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
     application.add_handler(CallbackQueryHandler(button_callback))
 
     # Set up webhook
     application.bot.set_webhook(WEBHOOK_URL)
 
-    # Start webhook handling
+    # Flask app to handle webhook requests
     app = Flask(__name__)
 
     @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -253,6 +210,7 @@ def main() -> None:
         application.process_update(update)
         return "OK"
 
+    # Start the Flask web server
     app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
