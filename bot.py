@@ -1,8 +1,8 @@
 import os
 import logging
-import asyncio
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext, Dispatcher
 from fuzzywuzzy import process
 from pymongo import MongoClient
 import requests
@@ -17,6 +17,7 @@ JSON_URL = os.getenv("JSON_URL")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
 CHANNELS = ["@cc_new_moviess"]
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Public URL for webhook
 
 # MongoDB setup
 client = MongoClient(MONGO_URI)
@@ -240,19 +241,36 @@ async def delete_movies(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(feedback_message)
 
-# Main function to set up the handlers
-def main() -> None:
-    application = Application.builder().token(BOT_TOKEN).build()
+# Flask app for webhook
+app = Flask(__name__)
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help))
-    application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("requests", view_requests))
-    application.add_handler(CommandHandler("delete", delete_movies))  # Add the /delete command handler
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-    application.add_handler(CallbackQueryHandler(button_callback))
+# Initialize Telegram bot and dispatcher
+application = Application.builder().token(BOT_TOKEN).build()
+dispatcher: Dispatcher = application.dispatcher
 
-    application.run_polling()
+# Add handlers to dispatcher
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("help", help))
+dispatcher.add_handler(CommandHandler("broadcast", broadcast))
+dispatcher.add_handler(CommandHandler("requests", view_requests))
+dispatcher.add_handler(CommandHandler("delete", delete_movies))
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
+dispatcher.add_handler(CallbackQueryHandler(button_callback))
 
+# Webhook route
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    """Process updates sent by Telegram."""
+    update = Update.de_json(request.get_json(), application.bot)
+    dispatcher.process_update(update)
+    return "OK", 200
+
+# Set webhook before the first request
+@app.before_first_request
+def set_webhook():
+    application.bot.delete_webhook()
+    application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+# Run Flask app
 if __name__ == "__main__":
-    main()
+    app.run(port=8443, host="0.0.0.0")
