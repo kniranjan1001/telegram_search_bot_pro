@@ -2,8 +2,8 @@ import os
 import logging
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext, Dispatcher
-from fuzzywuzzy import process
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
+# from fuzzywuzzy import process
 from pymongo import MongoClient
 import requests
 
@@ -11,13 +11,15 @@ import requests
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
+
+# Now you can access the environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 JSON_URL = os.getenv("JSON_URL")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
-CHANNELS = ["@cc_new_moviess"]
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Public URL for webhook
+CHANNELS = ["@cc_new_moviess"]  # Assuming CHANNELS are comma-separated
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+# Load environment variables
 
 # MongoDB setup
 client = MongoClient(MONGO_URI)
@@ -246,30 +248,32 @@ app = Flask(__name__)
 
 # Initialize Telegram bot and dispatcher
 application = Application.builder().token(BOT_TOKEN).build()
-dispatcher: Dispatcher = application.dispatcher
 
 # Add handlers to dispatcher
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("help", help))
-dispatcher.add_handler(CommandHandler("broadcast", broadcast))
-dispatcher.add_handler(CommandHandler("requests", view_requests))
-dispatcher.add_handler(CommandHandler("delete", delete_movies))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-dispatcher.add_handler(CallbackQueryHandler(button_callback))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help))
+application.add_handler(CommandHandler("broadcast", broadcast))
+application.add_handler(CommandHandler("requests", view_requests))
+application.add_handler(CommandHandler("delete", delete_movies))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
+application.add_handler(CallbackQueryHandler(button_callback))
 
 # Webhook route
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     """Process updates sent by Telegram."""
     update = Update.de_json(request.get_json(), application.bot)
-    dispatcher.process_update(update)
+    application.update_queue.put(update)
     return "OK", 200
 
 # Set webhook before the first request
-@app.before_first_request
+# Correct use of before_first_request
 def set_webhook():
     application.bot.delete_webhook()
     application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+# Use this instead of @app.before_first_request decorator
+set_webhook()
 
 # Run Flask app
 if __name__ == "__main__":
