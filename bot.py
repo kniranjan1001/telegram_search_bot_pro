@@ -51,7 +51,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     subscribed = await is_subscribed(user.id, context)
     
     if not subscribed:
-        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/addlist/4LAlWDoYvHk2ZDdl")] for channel in CHANNELS]
+        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/addlist/ijkMdb6cwtRkYjA1")] for channel in CHANNELS]
         await update.message.reply_text(
             "🔔 You need to subscribe to the following channels to use this bot:",
             reply_markup=InlineKeyboardMarkup(buttons),
@@ -66,7 +66,7 @@ async def search_movie(update: Update, context: CallbackContext) -> None:
     subscribed = await is_subscribed(user.id, context)
 
     if not subscribed:
-        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/addlist/4LAlWDoYvHk2ZDdl")] for channel in CHANNELS]
+        buttons = [[InlineKeyboardButton("Subscribe Here", url=f"https://t.me/addlist/ijkMdb6cwtRkYjA1")] for channel in CHANNELS]
         await update.message.reply_text(
             "🔔 You need to subscribe to the following channels to use this bot:",
             reply_markup=InlineKeyboardMarkup(buttons),
