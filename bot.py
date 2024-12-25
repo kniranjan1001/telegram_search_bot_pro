@@ -58,7 +58,7 @@ async def start(update: Update, context: CallbackContext) -> None:
         )
         return
 
-    await update.message.reply_text("🎬 Welcome to the Movie Bot! Send me original movie name that u want to request.")
+    await update.message.reply_text("🎬 Welcome to the Movie Request Bot!\n👉 Send me original movie name \n👉 We will try to find match \n👉 Click No if no match found \n Ur request will be noted 😎.")
 
 # Handle movie search
 async def search_movie(update: Update, context: CallbackContext) -> None:
